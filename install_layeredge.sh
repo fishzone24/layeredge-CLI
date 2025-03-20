@@ -221,30 +221,19 @@ start_merkle_service() {
                 ps -p $PID_INFO -o pid,ppid,cmd 2>/dev/null || ps $PID_INFO 2>/dev/null
             fi
             
-            log_info "您希望如何处理?"
-            log_info "1. 终止占用端口 $MERKLE_PORT 的进程并继续安装"
-            log_info "2. 使用其他端口"
-            log_info "请输入选项 (1 或 2):"
+            log_info "检测到端口占用，将自动终止占用进程并继续安装"
+            log_warn "正在终止进程 PID: $PID_INFO..."
+            kill -9 $PID_INFO 2>/dev/null
+            sleep 2
             
-            read PORT_CHOICE
-            
-            if [ "$PORT_CHOICE" = "1" ]; then
-                log_warn "正在终止进程 PID: $PID_INFO..."
-                kill -9 $PID_INFO 2>/dev/null
-                sleep 2
-                
-                # 再次检查端口是否已释放
-                if check_port_usage $MERKLE_PORT; then
-                    log_error "无法释放端口 $MERKLE_PORT，将尝试使用其他端口"
-                    log_info "请输入一个新的端口号 (推荐范围: 3002-3999):"
-                    read NEW_PORT
-                else
-                    log_info "端口 $MERKLE_PORT 已成功释放，将继续使用此端口"
-                    MERKLE_PORT=3001
-                fi
-            else
+            # 再次检查端口是否已释放
+            if check_port_usage $MERKLE_PORT; then
+                log_error "无法释放端口 $MERKLE_PORT，将尝试使用其他端口"
                 log_info "请输入一个新的端口号 (推荐范围: 3002-3999):"
                 read NEW_PORT
+            else
+                log_info "端口 $MERKLE_PORT 已成功释放，将继续使用此端口"
+                MERKLE_PORT=3001
             fi
         else
             log_warn "无法获取占用端口 $MERKLE_PORT 的进程信息"
