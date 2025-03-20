@@ -30,9 +30,10 @@ curl -sL https://raw.githubusercontent.com/fishzone24/layeredge-CLI/refs/heads/m
 ```bash
 nano .env
 ```
-2. 使用交互式管理菜单（安装脚本会自动创建）：
+2. 使用交互式管理菜单管理节点：
 ```bash
-bash ~/layeredge_menu.sh
+# 安装完成后可以直接使用以下命令访问交互式管理菜单
+sudo bash install_layeredge.sh menu
 ```
 通过菜单可以：
 - 启动/停止/重启服务

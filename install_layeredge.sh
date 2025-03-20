@@ -138,7 +138,8 @@ clone_repository() {
     git clone https://github.com/Layer-Edge/light-node.git || { log_error "克隆仓库失败"; exit 1; }
     log_info "仓库克隆成功"
     
-    cd light-node
+    # 不进入light-node目录，保持在当前目录
+    log_info "仓库已克隆到: $(pwd)/light-node"
 }
 
 # 配置环境变量
@@ -147,6 +148,16 @@ configure_environment() {
     
     # 获取Merkle服务端口，如果未设置则使用默认值3001
     local merkle_port=${MERKLE_PORT:-3001}
+    
+    # 确保在light-node目录中创建配置文件
+    if [ ! -d "light-node" ]; then
+        log_error "找不到light-node目录，无法创建配置文件"
+        return 1
+    fi
+    
+    # 进入light-node目录
+    cd light-node
+    log_info "进入light-node目录创建配置文件: $(pwd)"
     
     # 创建配置文件
     cat > .env << EOL
@@ -194,6 +205,10 @@ start_merkle_service() {
     # 确保环境变量正确设置
     export PATH="$HOME/.risc0/bin:$PATH"
     export RISC0_TOOLCHAIN_PATH="$HOME/.risc0/toolchain"
+    
+    # 保存当前目录路径，以便后续返回
+    ORIGINAL_DIR=$(pwd)
+    log_info "保存当前目录: $ORIGINAL_DIR"
     
     # 默认端口
     MERKLE_PORT=3001
@@ -273,6 +288,10 @@ start_merkle_service() {
     
     # 显示当前环境变量和系统信息，帮助调试
     log_info "当前RISC0_TOOLCHAIN_PATH: $RISC0_TOOLCHAIN_PATH"
+    
+    # 返回到原始目录
+    cd "$ORIGINAL_DIR"
+    log_info "返回到原始目录: $(pwd)"
 }
 
 # 构建并运行Light Node
@@ -280,15 +299,39 @@ build_and_run_light_node() {
     log_step "构建并运行Light Node"
     
     # 确保在light-node目录中
-    if [ ! -d "light-node" ]; then
-        cd ..
+    # 首先获取当前目录
+    CURRENT_DIR=$(pwd)
+    log_info "当前目录: $CURRENT_DIR"
+    
+    # 检查当前目录是否是light-node目录
+    if [[ "$CURRENT_DIR" != *"/light-node"* && "$CURRENT_DIR" != *"/light-node/"* ]]; then
+        # 如果不是，尝试返回到安装根目录
+        cd $HOME
+        
+        # 检查是否存在light-node目录
         if [ ! -d "light-node" ]; then
             log_error "找不到light-node目录，请确保仓库克隆正确"
+            log_info "尝试重新克隆仓库..."
+            clone_repository
+        fi
+    else
+        # 如果当前在light-node的子目录中，返回到light-node目录
+        while [[ "$(basename $(pwd))" != "light-node" && "$(pwd)" != "/" && "$(pwd)" != "$HOME" ]]; do
+            cd ..
+        done
+    fi
+    
+    # 最终确认是否在light-node目录中
+    if [[ "$(basename $(pwd))" != "light-node" ]]; then
+        if [ -d "light-node" ]; then
+            cd light-node
+        else
+            log_error "无法找到light-node目录，请手动检查安装"
             exit 1
         fi
     fi
     
-    cd light-node
+    log_info "进入light-node目录: $(pwd)"
     
     # 构建Light Node
     log_info "开始构建Light Node..."
@@ -332,29 +375,33 @@ EOL
     fi
 }
 
-# 创建交互式管理菜单
-create_management_menu() {
-    log_step "创建交互式管理菜单"
+# 运行交互式管理菜单
+run_management_menu() {
+    log_step "运行交互式管理菜单"
     
-    # 确保在主目录中
-    cd $HOME
+    # 清屏函数
+    clear_screen() {
+        clear
+    }
     
-    # 创建交互式菜单脚本
-    cat > layeredge_menu.sh << EOL
-#!/bin/bash
-
-# LayerEdge CLI 交互式菜单
-# 此脚本提供LayerEdge CLI Light Node的交互式管理界面
-
-# 颜色定义
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
-
-# 清屏函数
+    # 显示标题
+    show_header() {
+        echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${CYAN}║                LayerEdge CLI 管理工具                      ║${NC}"
+        echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+        echo
+    }
+    
+    # 检查服务状态
+    check_service_status() {
+        if systemctl is-active --quiet layeredge-light-node; then
+            echo -e "${GREEN}● 运行中${NC}"
+        else
+            echo -e "${RED}● 已停止${NC}"
+        fi
+    }
+    
+    # 主菜单
 clear_screen() {
     clear
 }
@@ -646,10 +693,8 @@ uninstall_service() {
 show_main_menu
 EOL
     
-    # 添加执行权限
-    chmod +x layeredge_menu.sh
-    
-    log_info "交互式管理菜单已创建在主目录中"
+    # 返回主菜单
+    show_main_menu
 }
 
 # 显示使用说明
@@ -659,7 +704,7 @@ show_instructions() {
     echo -e "\n${GREEN}LayerEdge CLI Light Node 已成功安装!${NC}\n"
     
     echo -e "${YELLOW}管理命令:${NC}"
-    echo -e "  交互式管理菜单: ${GREEN}bash ~/layeredge_menu.sh${NC}"
+    echo -e "  交互式管理菜单: ${GREEN}sudo bash $0 menu${NC}"
     
     echo -e "\n${YELLOW}重要提示:${NC}"
     echo -e "  1. 请确保已正确配置 ${GREEN}light-node/.env${NC} 文件中的环境变量"
@@ -680,14 +725,30 @@ main() {
         exit $?
     fi
     
+    # 检查是否有参数
+    if [ "$1" == "menu" ]; then
+        # 直接运行菜单
+        run_management_menu
+        exit 0
+    fi
+    
     # 执行安装步骤
     install_dependencies
     clone_repository
     start_merkle_service
     configure_environment
     build_and_run_light_node
-    create_management_menu
     show_instructions
+    
+    # 询问是否立即运行管理菜单
+    echo -e "\n${YELLOW}是否立即运行管理菜单? (y/n)${NC}"
+    read -r run_menu
+    if [[ $run_menu == "y" || $run_menu == "Y" ]]; then
+        run_management_menu
+    else
+        echo -e "\n${GREEN}您可以随时通过运行以下命令启动管理菜单:${NC}"
+        echo -e "${BLUE}sudo bash $0 menu${NC}\n"
+    fi
 }
 
 # 执行主函数
