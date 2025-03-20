@@ -328,28 +328,46 @@ start_merkle_service() {
     echo "使用端口: $MERKLE_PORT" >> merkle-service.log
     
     # 启动服务并重定向所有输出，使用指定端口
-    MERKLE_SERVICE_PORT=$MERKLE_PORT nohup cargo run --verbose > merkle-service.log 2>&1 &
+    # 设置更多环境变量以确保服务正常启动
+    export RUST_BACKTRACE=1  # 启用详细的错误堆栈跟踪
+    export RUST_LOG=debug    # 设置日志级别为debug以获取更多信息
+    export MERKLE_SERVICE_PORT=$MERKLE_PORT
+    
+    log_info "使用以下环境变量启动Merkle服务:"
+    log_info "MERKLE_SERVICE_PORT=$MERKLE_PORT"
+    log_info "RUST_BACKTRACE=$RUST_BACKTRACE"
+    log_info "RUST_LOG=$RUST_LOG"
+    
+    # 尝试使用更详细的参数启动服务
+    nohup cargo run --verbose > merkle-service.log 2>&1 &
     MERKLE_PID=$!
     echo $MERKLE_PID > merkle-service.pid
     
     log_info "Merkle服务进程已启动(PID: $MERKLE_PID)，等待服务初始化..."
     
     # 增加等待时间并添加进度指示
-    WAIT_TIME=30
+    WAIT_TIME=60  # 增加等待时间到60秒
     for i in $(seq 1 $WAIT_TIME); do
         if ! ps -p $MERKLE_PID > /dev/null; then
             log_error "Merkle服务进程已终止，启动失败"
             log_info "查看日志内容:"
-            tail -n 20 merkle-service.log
+            tail -n 30 merkle-service.log
             exit 1
         fi
         
         # 每5秒检查一次日志中是否有成功启动的标志
         if [ $((i % 5)) -eq 0 ]; then
-            if grep -q "Listening on" merkle-service.log 2>/dev/null; then
+            # 检查多种成功启动的标志
+            if grep -q "Listening on" merkle-service.log 2>/dev/null || grep -q "server started" merkle-service.log 2>/dev/null || grep -q "started http server" merkle-service.log 2>/dev/null; then
                 log_info "Merkle服务已成功启动，监听端口已打开"
                 break
             fi
+            
+            # 检查是否有明显的错误
+            if grep -q -i "error:" merkle-service.log 2>/dev/null; then
+                log_warn "检测到可能的错误，继续等待服务启动..."
+            fi
+            
             log_info "等待中... $i/$WAIT_TIME 秒"
         fi
         sleep 1
@@ -358,10 +376,35 @@ start_merkle_service() {
     # 最终检查
     if ps -p $MERKLE_PID > /dev/null; then
         # 检查日志中是否有错误信息
-        if grep -i "error\|panic\|failed" merkle-service.log; then
+        if grep -i "error\|panic\|failed\|exception" merkle-service.log; then
             log_warn "Merkle服务进程正在运行，但日志中发现错误信息，请检查"
             log_info "最近的日志内容:"
-            tail -n 10 merkle-service.log
+            tail -n 20 merkle-service.log
+            
+            # 检查是否有特定的常见错误
+            if grep -q "address already in use" merkle-service.log; then
+                log_error "端口 $MERKLE_PORT 已被占用，请尝试使用其他端口"
+                log_info "您可以使用 ./stop_layeredge.sh 停止服务后，使用 ./restart_layeredge.sh 重新启动并选择新端口"
+            elif grep -q "permission denied" merkle-service.log; then
+                log_error "权限错误，请检查目录权限"
+            elif grep -q "No such file or directory" merkle-service.log; then
+                log_error "找不到所需文件，请检查安装是否完整"
+            fi
+            
+            # 询问用户是否继续
+            log_warn "检测到错误，但服务进程仍在运行。您希望:"
+            echo "1) 继续安装 (服务可能无法正常工作)"
+            echo "2) 终止安装并修复问题"
+            read -p "请选择 [1/2]: " choice
+            
+            if [ "$choice" = "2" ]; then
+                log_info "正在终止Merkle服务进程..."
+                kill $MERKLE_PID 2>/dev/null
+                log_error "安装已终止，请修复问题后重试"
+                exit 1
+            else
+                log_warn "继续安装，但服务可能无法正常工作"
+            fi
         else
             log_info "Merkle服务已成功启动，PID: $MERKLE_PID"
         fi
@@ -539,7 +582,19 @@ fi
 # 启动Merkle服务
 cd risc0-merkle-service
 echo "启动Merkle服务(端口: $MERKLE_PORT)..."
-MERKLE_SERVICE_PORT=$MERKLE_PORT nohup cargo run > merkle-service.log 2>&1 &
+
+# 设置环境变量
+export RUST_BACKTRACE=1  # 启用详细的错误堆栈跟踪
+export RUST_LOG=debug    # 设置日志级别为debug以获取更多信息
+export MERKLE_SERVICE_PORT=$MERKLE_PORT
+
+echo "使用以下环境变量启动Merkle服务:"
+echo "MERKLE_SERVICE_PORT=$MERKLE_PORT"
+echo "RUST_BACKTRACE=$RUST_BACKTRACE"
+echo "RUST_LOG=$RUST_LOG"
+
+# 启动服务
+MERKLE_SERVICE_PORT=$MERKLE_PORT nohup cargo run --verbose > merkle-service.log 2>&1 &
 MERKLE_PID=$!
 echo $MERKLE_PID > merkle-service.pid
 echo "Merkle服务已启动，PID: $MERKLE_PID"
