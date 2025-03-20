@@ -271,8 +271,6 @@ start_merkle_service() {
         fi
     else
         log_info "端口 $MERKLE_PORT 可用"
-    else
-        log_info "端口 $MERKLE_PORT 可用"
     fi
     
     # 检查目录是否存在
