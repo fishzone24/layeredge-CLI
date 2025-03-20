@@ -114,11 +114,12 @@ clone_repository() {
     log_step "克隆Light Node仓库"
     
     if [ -d "light-node" ]; then
-        log_warn "light-node目录已存在，跳过克隆"
-    else
-        git clone https://github.com/Layer-Edge/light-node.git || { log_error "克隆仓库失败"; exit 1; }
-        log_info "仓库克隆成功"
+        log_warn "light-node目录已存在，将删除并重新克隆"
+        rm -rf light-node || { log_error "删除light-node目录失败"; exit 1; }
     fi
+    
+    git clone https://github.com/Layer-Edge/light-node.git || { log_error "克隆仓库失败"; exit 1; }
+    log_info "仓库克隆成功"
     
     cd light-node
 }
@@ -184,7 +185,9 @@ start_merkle_service() {
     if check_port_usage $MERKLE_PORT; then
         log_warn "端口 $MERKLE_PORT 已被占用"
         log_info "请输入一个新的端口号 (推荐范围: 3002-3999):"
-        read -p "新端口号 > " NEW_PORT
+        
+        # 使用bash内置的read命令，确保在脚本中正确读取用户输入
+        read NEW_PORT
         
         # 验证输入是否为有效端口号
         if [[ ! $NEW_PORT =~ ^[0-9]+$ ]] || [ $NEW_PORT -lt 1024 ] || [ $NEW_PORT -gt 65535 ]; then
