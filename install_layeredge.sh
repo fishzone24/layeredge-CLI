@@ -52,14 +52,31 @@ install_dependencies() {
     # 检查并安装Go
     if ! check_command go; then
         log_info "安装Go..."
-        wget https://go.dev/dl/go1.20.linux-amd64.tar.gz -O go.tar.gz || { log_error "下载Go失败"; exit 1; }
+        # 安装Go 1.21.0版本，支持slices包
+        wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz -O go.tar.gz || { log_error "下载Go失败"; exit 1; }
         rm -rf /usr/local/go && tar -C /usr/local -xzf go.tar.gz || { log_error "解压Go失败"; exit 1; }
         echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> $HOME/.profile
         source $HOME/.profile
         rm go.tar.gz
         log_info "Go安装完成: $(go version)"
     else
-        log_info "Go已安装: $(go version)"
+        # 检查已安装的Go版本
+        GO_VERSION=$(go version | grep -oP 'go\d+\.\d+\.\d+' | grep -oP '\d+\.\d+\.\d+')
+        GO_MAJOR=$(echo $GO_VERSION | cut -d. -f1)
+        GO_MINOR=$(echo $GO_VERSION | cut -d. -f2)
+        
+        if [ "$GO_MAJOR" -eq 1 ] && [ "$GO_MINOR" -lt 21 ]; then
+            log_warn "检测到Go版本($GO_VERSION)低于1.21，LayerEdge需要Go 1.21+版本"
+            log_info "正在更新Go..."
+            wget https://go.dev/dl/go1.21.0.linux-amd64.tar.gz -O go.tar.gz || { log_error "下载Go失败"; exit 1; }
+            rm -rf /usr/local/go && tar -C /usr/local -xzf go.tar.gz || { log_error "解压Go失败"; exit 1; }
+            echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> $HOME/.profile
+            source $HOME/.profile
+            rm go.tar.gz
+            log_info "Go更新完成: $(go version)"
+        else
+            log_info "Go已安装且版本满足要求: $(go version)"
+        fi
     fi
     
     # 检查并安装Rust
@@ -184,25 +201,76 @@ start_merkle_service() {
     # 检查端口是否被占用
     if check_port_usage $MERKLE_PORT; then
         log_warn "端口 $MERKLE_PORT 已被占用"
-        log_info "请输入一个新的端口号 (推荐范围: 3002-3999):"
         
-        # 使用bash内置的read命令，确保在脚本中正确读取用户输入
-        read NEW_PORT
+        # 显示占用端口的进程信息
+        log_info "正在查找占用端口 $MERKLE_PORT 的进程..."
+        PID_INFO=""
         
-        # 验证输入是否为有效端口号
-        if [[ ! $NEW_PORT =~ ^[0-9]+$ ]] || [ $NEW_PORT -lt 1024 ] || [ $NEW_PORT -gt 65535 ]; then
-            log_error "无效的端口号，端口必须是1024-65535之间的数字"
-            exit 1
+        if command -v lsof &> /dev/null; then
+            PID_INFO=$(lsof -i:$MERKLE_PORT -sTCP:LISTEN -t 2>/dev/null)
+        elif command -v netstat &> /dev/null; then
+            PID_INFO=$(netstat -tuln | grep ":$MERKLE_PORT " | awk '{print $7}' | cut -d'/' -f1 2>/dev/null)
+        elif command -v ss &> /dev/null; then
+            PID_INFO=$(ss -tuln | grep ":$MERKLE_PORT " | awk '{print $7}' 2>/dev/null)
         fi
         
-        # 检查新端口是否也被占用
-        if check_port_usage $NEW_PORT; then
-            log_error "新端口 $NEW_PORT 也被占用，请尝试其他端口或手动释放端口"
-            exit 1
+        if [ -n "$PID_INFO" ]; then
+            log_info "发现占用端口 $MERKLE_PORT 的进程 PID: $PID_INFO"
+            if command -v ps &> /dev/null; then
+                log_info "进程详情:"
+                ps -p $PID_INFO -o pid,ppid,cmd 2>/dev/null || ps $PID_INFO 2>/dev/null
+            fi
+            
+            log_info "您希望如何处理?"
+            log_info "1. 终止占用端口 $MERKLE_PORT 的进程并继续安装"
+            log_info "2. 使用其他端口"
+            log_info "请输入选项 (1 或 2):"
+            
+            read PORT_CHOICE
+            
+            if [ "$PORT_CHOICE" = "1" ]; then
+                log_warn "正在终止进程 PID: $PID_INFO..."
+                kill -9 $PID_INFO 2>/dev/null
+                sleep 2
+                
+                # 再次检查端口是否已释放
+                if check_port_usage $MERKLE_PORT; then
+                    log_error "无法释放端口 $MERKLE_PORT，将尝试使用其他端口"
+                    log_info "请输入一个新的端口号 (推荐范围: 3002-3999):"
+                    read NEW_PORT
+                else
+                    log_info "端口 $MERKLE_PORT 已成功释放，将继续使用此端口"
+                    MERKLE_PORT=3001
+                fi
+            else
+                log_info "请输入一个新的端口号 (推荐范围: 3002-3999):"
+                read NEW_PORT
+            fi
+        else
+            log_warn "无法获取占用端口 $MERKLE_PORT 的进程信息"
+            log_info "请输入一个新的端口号 (推荐范围: 3002-3999):"
+            read NEW_PORT
         fi
         
-        MERKLE_PORT=$NEW_PORT
-        log_info "将使用新端口: $MERKLE_PORT"
+        # 如果需要使用新端口，验证输入是否有效
+        if [ -n "$NEW_PORT" ]; then
+            # 验证输入是否为有效端口号
+            if [[ ! $NEW_PORT =~ ^[0-9]+$ ]] || [ $NEW_PORT -lt 1024 ] || [ $NEW_PORT -gt 65535 ]; then
+                log_error "无效的端口号，端口必须是1024-65535之间的数字"
+                exit 1
+            fi
+            
+            # 检查新端口是否也被占用
+            if check_port_usage $NEW_PORT; then
+                log_error "新端口 $NEW_PORT 也被占用，请尝试其他端口或手动释放端口"
+                exit 1
+            fi
+            
+            MERKLE_PORT=$NEW_PORT
+            log_info "将使用新端口: $MERKLE_PORT"
+        fi
+    else
+        log_info "端口 $MERKLE_PORT 可用"
     else
         log_info "端口 $MERKLE_PORT 可用"
     fi
@@ -337,6 +405,32 @@ build_and_run_light_node() {
     fi
     
     log_info "构建Light Node..."
+    
+    # 检查并降级不兼容的依赖包
+    log_info "检查依赖包版本兼容性..."
+    
+    # 获取当前Go版本
+    GO_VERSION=$(go version | grep -oP 'go\d+\.\d+\.\d+' | grep -oP '\d+\.\d+\.\d+')
+    GO_MAJOR=$(echo $GO_VERSION | cut -d. -f1)
+    GO_MINOR=$(echo $GO_VERSION | cut -d. -f2)
+    
+    # 如果Go版本低于1.23，降级需要maps包的依赖
+    if [ "$GO_MAJOR" -eq 1 ] && [ "$GO_MINOR" -lt 23 ]; then
+        log_info "当前Go版本($GO_VERSION)低于1.23，降级需要maps包的依赖..."
+        # 降级grpc版本到不需要maps包的版本
+        go get google.golang.org/grpc@v1.59.0
+    fi
+    
+    # 如果Go版本低于1.21，降级需要slices包的依赖
+    if [ "$GO_MAJOR" -eq 1 ] && [ "$GO_MINOR" -lt 21 ]; then
+        log_info "当前Go版本($GO_VERSION)低于1.21，降级需要slices包的依赖..."
+        # 这里可以添加降级特定依赖的命令
+    fi
+    
+    # 更新go.mod和go.sum
+    go mod tidy
+    
+    # 尝试构建
     go build || { log_error "构建Light Node失败"; exit 1; }
     
     log_info "启动Light Node..."
