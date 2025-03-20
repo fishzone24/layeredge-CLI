@@ -27,11 +27,19 @@ curl -sL https://raw.githubusercontent.com/fishzone24/layeredge-CLI/refs/heads/m
 ## 使用说明
 安装完成后：
 1. 编辑.env文件配置私钥
-```nano .env```
-2. 使用管理脚本：
-- 检查状态 ```./status_layeredge.sh```
-- 停止服务 ```./stop_layeredge.sh```
-- 重启服务 ```./restart_layeredge.sh```
+```bash
+nano .env
+```
+2. 使用交互式管理菜单（安装脚本会自动创建）：
+```bash
+bash ~/layeredge_menu.sh
+```
+通过菜单可以：
+- 启动/停止/重启服务
+- 查看服务状态和日志
+- 管理配置文件
+- 查看系统信息
+- 卸载服务
 
 ## 安全提示
 ⚠️ 请妥善保管PRIVATE_KEY配置

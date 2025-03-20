@@ -332,45 +332,12 @@ EOL
     fi
 }
 
-# 创建管理脚本
-create_management_scripts() {
-    log_step "创建管理脚本"
+# 创建交互式管理菜单
+create_management_menu() {
+    log_step "创建交互式管理菜单"
     
     # 确保在主目录中
     cd $HOME
-    
-    # 创建启动脚本
-    cat > start_layeredge.sh << EOL
-#!/bin/bash
-systemctl start layeredge-light-node
-echo "LayerEdge Light Node服务已启动"
-EOL
-    
-    # 创建停止脚本
-    cat > stop_layeredge.sh << EOL
-#!/bin/bash
-systemctl stop layeredge-light-node
-echo "LayerEdge Light Node服务已停止"
-EOL
-    
-    # 创建重启脚本
-    cat > restart_layeredge.sh << EOL
-#!/bin/bash
-systemctl restart layeredge-light-node
-echo "LayerEdge Light Node服务已重启"
-EOL
-    
-    # 创建状态检查脚本
-    cat > status_layeredge.sh << EOL
-#!/bin/bash
-systemctl status layeredge-light-node
-EOL
-    
-    # 创建日志查看脚本
-    cat > logs_layeredge.sh << EOL
-#!/bin/bash
-journalctl -u layeredge-light-node -f
-EOL
     
     # 创建交互式菜单脚本
     cat > layeredge_menu.sh << EOL
@@ -424,9 +391,10 @@ show_main_menu() {
     echo -e "${GREEN}5)${NC} 查看服务日志"
     echo -e "${GREEN}6)${NC} 配置管理"
     echo -e "${GREEN}7)${NC} 系统信息"
+    echo -e "${GREEN}8)${NC} 卸载服务"
     echo -e "${GREEN}0)${NC} 退出"
     echo
-    echo -n -e "${YELLOW}请输入选项 [0-7]:${NC} "
+    echo -n -e "${YELLOW}请输入选项 [0-8]:${NC} "
     read -r choice
     
     case \$choice in
@@ -437,6 +405,7 @@ show_main_menu() {
         5) show_logs ;;
         6) config_management ;;
         7) system_info ;;
+        8) uninstall_service ;;
         0) exit 0 ;;
         *) 
             echo -e "${RED}无效选项!${NC}"
@@ -636,14 +605,51 @@ system_info() {
     show_main_menu
 }
 
+# 卸载服务
+uninstall_service() {
+    clear_screen
+    show_header
+    echo -e "${YELLOW}[警告]${NC} 您确定要卸载 LayerEdge Light Node 服务吗? (y/n)"
+    read -r confirm
+    
+    if [[ $confirm != "y" && $confirm != "Y" ]]; then
+        echo -e "${GREEN}[信息]${NC} 已取消卸载操作"
+        sleep 2
+        show_main_menu
+        return
+    fi
+    
+    echo -e "${BLUE}[操作]${NC} 正在卸载 LayerEdge Light Node 服务..."
+    
+    # 停止并禁用服务
+    systemctl stop layeredge-light-node 2>/dev/null
+    systemctl disable layeredge-light-node 2>/dev/null
+    
+    # 删除服务文件
+    rm -f /etc/systemd/system/layeredge-light-node.service
+    systemctl daemon-reload
+    
+    # 删除安装目录
+    if [ -d "$HOME/light-node" ]; then
+        rm -rf "$HOME/light-node"
+        echo -e "${GREEN}[信息]${NC} 已删除 light-node 目录"
+    fi
+    
+    echo -e "${GREEN}[成功]${NC} LayerEdge Light Node 服务已成功卸载!"
+    echo
+    echo -e "按任意键返回主菜单..."
+    read -n 1
+    show_main_menu
+}
+
 # 启动主菜单
 show_main_menu
 EOL
     
     # 添加执行权限
-    chmod +x start_layeredge.sh stop_layeredge.sh restart_layeredge.sh status_layeredge.sh logs_layeredge.sh layeredge_menu.sh
+    chmod +x layeredge_menu.sh
     
-    log_info "管理脚本已创建在主目录中"
+    log_info "交互式管理菜单已创建在主目录中"
 }
 
 # 显示使用说明
@@ -653,16 +659,12 @@ show_instructions() {
     echo -e "\n${GREEN}LayerEdge CLI Light Node 已成功安装!${NC}\n"
     
     echo -e "${YELLOW}管理命令:${NC}"
-    echo -e "  启动服务: ${GREEN}bash ~/start_layeredge.sh${NC}"
-    echo -e "  停止服务: ${GREEN}bash ~/stop_layeredge.sh${NC}"
-    echo -e "  重启服务: ${GREEN}bash ~/restart_layeredge.sh${NC}"
-    echo -e "  查看状态: ${GREEN}bash ~/status_layeredge.sh${NC}"
-    echo -e "  查看日志: ${GREEN}bash ~/logs_layeredge.sh${NC}"
+    echo -e "  交互式管理菜单: ${GREEN}bash ~/layeredge_menu.sh${NC}"
     
     echo -e "\n${YELLOW}重要提示:${NC}"
     echo -e "  1. 请确保已正确配置 ${GREEN}light-node/.env${NC} 文件中的环境变量"
-    echo -e "  2. 如需修改配置，请编辑 ${GREEN}light-node/.env${NC} 文件后重启服务"
-    echo -e "  3. 服务日志可通过 ${GREEN}journalctl -u layeredge-light-node -f${NC} 查看"
+    echo -e "  2. 如需修改配置，请通过管理菜单中的'配置管理'选项进行修改"
+    echo -e "  3. 所有节点管理操作（启动/停止/重启/查看状态/查看日志）均可通过交互式菜单完成"
     
     echo -e "\n${GREEN}感谢使用LayerEdge!${NC}\n"
 }
@@ -684,7 +686,7 @@ main() {
     start_merkle_service
     configure_environment
     build_and_run_light_node
-    create_management_scripts
+    create_management_menu
     show_instructions
 }
 
