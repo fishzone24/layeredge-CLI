@@ -127,11 +127,14 @@ clone_repository() {
 configure_environment() {
     log_step "配置环境变量"
     
+    # 获取Merkle服务端口，如果未设置则使用默认值3001
+    local merkle_port=${MERKLE_PORT:-3001}
+    
     # 创建配置文件
     cat > .env << EOL
 GRPC_URL=34.31.74.109:9090
 CONTRACT_ADDR=cosmos1ufs3tlq4umljk0qfe8k5ya0x6hpavn897u2cnf9k0en9jr7qarqqt56709
-ZK_PROVER_URL=http://127.0.0.1:3001
+ZK_PROVER_URL=http://127.0.0.1:${merkle_port}
 # 或者使用: ZK_PROVER_URL=https://layeredge.mintair.xyz/
 API_REQUEST_TIMEOUT=100
 POINTS_API=https://light-node.layeredge.io
@@ -143,6 +146,29 @@ EOL
     log_info "您可以使用以下命令编辑: nano .env"
 }
 
+# 检查端口是否被占用
+check_port_usage() {
+    local port=$1
+    if command -v netstat &> /dev/null; then
+        netstat -tuln | grep -q ":$port "
+        return $?
+    elif command -v ss &> /dev/null; then
+        ss -tuln | grep -q ":$port "
+        return $?
+    elif command -v lsof &> /dev/null; then
+        lsof -i:$port -sTCP:LISTEN &>/dev/null
+        return $?
+    else
+        # 如果以上命令都不可用，尝试通过尝试绑定端口来检查
+        (echo > /dev/tcp/127.0.0.1/$port) &>/dev/null
+        if [ $? -eq 0 ]; then
+            return 1  # 端口可用
+        else
+            return 0  # 端口被占用
+        fi
+    fi
+}
+
 # 启动Merkle服务
 start_merkle_service() {
     log_step "启动Merkle服务"
@@ -150,6 +176,33 @@ start_merkle_service() {
     # 确保环境变量正确设置
     export PATH="$HOME/.risc0/bin:$PATH"
     export RISC0_TOOLCHAIN_PATH="$HOME/.risc0/toolchain"
+    
+    # 默认端口
+    MERKLE_PORT=3001
+    
+    # 检查端口是否被占用
+    if check_port_usage $MERKLE_PORT; then
+        log_warn "端口 $MERKLE_PORT 已被占用"
+        log_info "请输入一个新的端口号 (推荐范围: 3002-3999):"
+        read -p "新端口号 > " NEW_PORT
+        
+        # 验证输入是否为有效端口号
+        if [[ ! $NEW_PORT =~ ^[0-9]+$ ]] || [ $NEW_PORT -lt 1024 ] || [ $NEW_PORT -gt 65535 ]; then
+            log_error "无效的端口号，端口必须是1024-65535之间的数字"
+            exit 1
+        fi
+        
+        # 检查新端口是否也被占用
+        if check_port_usage $NEW_PORT; then
+            log_error "新端口 $NEW_PORT 也被占用，请尝试其他端口或手动释放端口"
+            exit 1
+        fi
+        
+        MERKLE_PORT=$NEW_PORT
+        log_info "将使用新端口: $MERKLE_PORT"
+    else
+        log_info "端口 $MERKLE_PORT 可用"
+    fi
     
     # 检查目录是否存在
     if [ ! -d "risc0-merkle-service" ]; then
@@ -207,16 +260,17 @@ start_merkle_service() {
     fi
     
     # 启动服务
-    log_info "启动Merkle服务..."
+    log_info "启动Merkle服务(端口: $MERKLE_PORT)..."
     log_warn "Merkle服务将在后台运行，日志将输出到merkle-service.log"
     
     # 使用更详细的日志记录
     echo "启动时间: $(date)" > merkle-service.log
     echo "环境变量: RISC0_TOOLCHAIN_PATH=$RISC0_TOOLCHAIN_PATH" >> merkle-service.log
     echo "系统信息: $(uname -a)" >> merkle-service.log
+    echo "使用端口: $MERKLE_PORT" >> merkle-service.log
     
-    # 启动服务并重定向所有输出
-    nohup cargo run --verbose > merkle-service.log 2>&1 &
+    # 启动服务并重定向所有输出，使用指定端口
+    MERKLE_SERVICE_PORT=$MERKLE_PORT nohup cargo run --verbose > merkle-service.log 2>&1 &
     MERKLE_PID=$!
     echo $MERKLE_PID > merkle-service.pid
     
@@ -341,10 +395,67 @@ echo "重启LayerEdge服务..."
 # 停止服务
 ./stop_layeredge.sh
 
+# 获取当前配置的端口号
+if [ -f ".env" ]; then
+    MERKLE_PORT=$(grep -oP 'ZK_PROVER_URL=http://127.0.0.1:\K[0-9]+' .env || echo "3001")
+else
+    MERKLE_PORT=3001
+fi
+
+# 检查端口是否被占用
+check_port_usage() {
+    local port=$1
+    if command -v netstat &> /dev/null; then
+        netstat -tuln | grep -q ":$port "
+        return $?
+    elif command -v ss &> /dev/null; then
+        ss -tuln | grep -q ":$port "
+        return $?
+    elif command -v lsof &> /dev/null; then
+        lsof -i:$port -sTCP:LISTEN &>/dev/null
+        return $?
+    else
+        (echo > /dev/tcp/127.0.0.1/$port) &>/dev/null
+        if [ $? -eq 0 ]; then
+            return 1  # 端口可用
+        else
+            return 0  # 端口被占用
+        fi
+    fi
+}
+
+# 检查端口是否被占用
+if check_port_usage $MERKLE_PORT; then
+    echo "警告: 端口 $MERKLE_PORT 已被占用"
+    echo "请输入一个新的端口号 (推荐范围: 3002-3999):"
+    read -p "新端口号 > " NEW_PORT
+    
+    # 验证输入是否为有效端口号
+    if [[ ! $NEW_PORT =~ ^[0-9]+$ ]] || [ $NEW_PORT -lt 1024 ] || [ $NEW_PORT -gt 65535 ]; then
+        echo "错误: 无效的端口号，端口必须是1024-65535之间的数字"
+        exit 1
+    fi
+    
+    # 检查新端口是否也被占用
+    if check_port_usage $NEW_PORT; then
+        echo "错误: 新端口 $NEW_PORT 也被占用，请尝试其他端口或手动释放端口"
+        exit 1
+    fi
+    
+    MERKLE_PORT=$NEW_PORT
+    echo "将使用新端口: $MERKLE_PORT"
+    
+    # 更新.env文件中的端口
+    if [ -f ".env" ]; then
+        sed -i "s|ZK_PROVER_URL=http://127.0.0.1:[0-9]\+|ZK_PROVER_URL=http://127.0.0.1:$MERKLE_PORT|g" .env
+        echo "已更新.env文件中的端口配置"
+    fi
+fi
+
 # 启动Merkle服务
 cd risc0-merkle-service
-echo "启动Merkle服务..."
-nohup cargo run > merkle-service.log 2>&1 &
+echo "启动Merkle服务(端口: $MERKLE_PORT)..."
+MERKLE_SERVICE_PORT=$MERKLE_PORT nohup cargo run > merkle-service.log 2>&1 &
 MERKLE_PID=$!
 echo $MERKLE_PID > merkle-service.pid
 echo "Merkle服务已启动，PID: $MERKLE_PID"
@@ -459,8 +570,8 @@ main() {
     # 执行安装步骤
     install_dependencies
     clone_repository
-    configure_environment
     start_merkle_service
+    configure_environment
     build_and_run_light_node
     create_management_scripts
     show_instructions
